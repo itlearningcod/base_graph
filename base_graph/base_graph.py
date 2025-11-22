@@ -11,6 +11,13 @@ class BaseGraph:
         self.edges = {}
         self.rev_edges = {}
 
+    def add_property(self, key, value):
+        if key != "uid":
+            raise KeyError(f"Cannot use key '{key}', reserved")
+        if key in self.keys:
+            raise KeyError(f"key '{key}' already present")
+        self.keys[key] = value
+
     def next_auto_uid(self):
         uid = f'node-{self.progress}'
         self.progress += 1

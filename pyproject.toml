@@ -36,12 +36,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tuousername/graph-package"
-Repository = "https://github.com/tuousername/graph-package"
-Issues = "https://github.com/tuousername/graph-package/issues"
+Repository = "https://github.com/itlearningcod/base_graph"
+Issues = "https://github.com/itlearningcod/base_graph/issues"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["base_graph"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

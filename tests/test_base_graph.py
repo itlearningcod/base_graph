@@ -1,5 +1,5 @@
 import pytest
-from base_graph import Graph, Node
+from base_graph import BaseGraph, Node
 
 
 class TestNode:
@@ -61,11 +61,11 @@ class TestNode:
 
 
 class TestGraph:
-    """Test per la classe Graph"""
+    """Test per la classe BaseGraph"""
     
     def test_graph_initialization_empty(self):
         """Test inizializzazione grafo vuoto"""
-        graph = Graph()
+        graph = BaseGraph()
         assert graph.nodes == {}
         assert graph.edges == {}
         assert graph.rev_edges == {}
@@ -74,12 +74,12 @@ class TestGraph:
     
     def test_graph_initialization_with_keys(self):
         """Test inizializzazione grafo con chiavi"""
-        graph = Graph(name="", value=0, active=True)
+        graph = BaseGraph(name="", value=0, active=True)
         assert graph.keys == {"name": "", "value": 0, "active": True}
     
     def test_next_auto_uid_sequential(self):
         """Test generazione UID automatici sequenziali"""
-        graph = Graph()
+        graph = BaseGraph()
         uid1 = graph.next_auto_uid()
         uid2 = graph.next_auto_uid()
         uid3 = graph.next_auto_uid()
@@ -90,7 +90,7 @@ class TestGraph:
     
     def test_next_auto_uid_skips_existing(self):
         """Test che auto UID salta quelli già esistenti"""
-        graph = Graph()
+        graph = BaseGraph()
         graph.nodes["node-0"] = Node("node-0")
         
         uid = graph.next_auto_uid()
@@ -98,7 +98,7 @@ class TestGraph:
     
     def test_check_validity(self):
         """Test validazione degli attributi"""
-        graph = Graph(name="", value=0, active=True)
+        graph = BaseGraph(name="", value=0, active=True)
         
         # Attributi validi
         valid = graph.check_validity(name="Test", value=42, active=False)
@@ -114,7 +114,7 @@ class TestGraph:
     
     def test_add_node_with_auto_uid(self):
         """Test aggiunta nodo con UID automatico"""
-        graph = Graph(name="", value=0)
+        graph = BaseGraph(name="", value=0)
         uid = graph.add_node(name="Test", value=42)
         
         assert uid == "node-0"
@@ -125,7 +125,7 @@ class TestGraph:
     
     def test_add_node_with_custom_uid(self):
         """Test aggiunta nodo con UID personalizzato"""
-        graph = Graph(name="")
+        graph = BaseGraph(name="")
         uid = graph.add_node(uid="custom-1", name="Custom Node")
         
         assert uid == "custom-1"
@@ -135,7 +135,7 @@ class TestGraph:
     
     def test_add_node_with_duplicate_uid_uses_auto(self):
         """Test che UID duplicati generano auto-UID"""
-        graph = Graph(name="")
+        graph = BaseGraph(name="")
         uid1 = graph.add_node(uid="test-1", name="First")
         uid2 = graph.add_node(uid="test-1", name="Second")
         
@@ -146,7 +146,7 @@ class TestGraph:
     
     def test_add_node_invalid_attributes_ignored(self):
         """Test che attributi non validi vengono ignorati"""
-        graph = Graph(name="", value=0)
+        graph = BaseGraph(name="", value=0)
         graph.add_node(name="Valid", value=10, invalid_key="Ignored", wrong_type=["list"])
         
         node = graph.nodes["node-0"]
@@ -157,7 +157,7 @@ class TestGraph:
     
     def test_modify_node(self):
         """Test modifica attributi di un nodo esistente"""
-        graph = Graph(name="", value=0, active=True)
+        graph = BaseGraph(name="", value=0, active=True)
         uid = graph.add_node(name="Original", value=10, active=False)
         
         graph.modify_node(uid, name="Modified", value=20)
@@ -168,14 +168,14 @@ class TestGraph:
     
     def test_modify_node_nonexistent_raises_error(self):
         """Test che modificare un nodo inesistente solleva errore"""
-        graph = Graph(name="")
+        graph = BaseGraph(name="")
         
         with pytest.raises(KeyError, match="does not exist"):
             graph.modify_node("nonexistent", name="Test")
     
     def test_modify_node_invalid_attributes_ignored(self):
         """Test che attributi non validi sono ignorati in modify_node"""
-        graph = Graph(name="", value=0)
+        graph = BaseGraph(name="", value=0)
         uid = graph.add_node(name="Test", value=10)
         
         graph.modify_node(uid, name="Updated", invalid_key="Ignored")
@@ -185,7 +185,7 @@ class TestGraph:
     
     def test_del_node(self):
         """Test rimozione di un nodo"""
-        graph = Graph()
+        graph = BaseGraph()
         uid = graph.add_node()
         
         assert uid in graph.nodes
@@ -194,14 +194,14 @@ class TestGraph:
     
     def test_del_node_nonexistent_raises_error(self):
         """Test che rimuovere un nodo inesistente solleva errore"""
-        graph = Graph()
+        graph = BaseGraph()
         
         with pytest.raises(KeyError, match="does not exist"):
             graph.del_node("nonexistent")
     
     def test_del_node_removes_edges(self):
         """Test che rimuovere un nodo rimuove anche i suoi archi"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -221,7 +221,7 @@ class TestGraph:
     
     def test_add_edge_between_existing_nodes(self):
         """Test aggiunta arco tra nodi esistenti"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         
@@ -236,7 +236,7 @@ class TestGraph:
     
     def test_add_edge_nonexistent_source_raises_error(self):
         """Test che aggiungere arco con sorgente inesistente solleva errore"""
-        graph = Graph()
+        graph = BaseGraph()
         v2 = graph.add_node()
         
         with pytest.raises(KeyError, match="Source node"):
@@ -244,7 +244,7 @@ class TestGraph:
     
     def test_add_edge_nonexistent_target_raises_error(self):
         """Test che aggiungere arco con target inesistente solleva errore"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         
         with pytest.raises(KeyError, match="Target node"):
@@ -252,7 +252,7 @@ class TestGraph:
     
     def test_add_multiple_edges_same_type(self):
         """Test aggiunta di più archi dello stesso tipo"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -267,7 +267,7 @@ class TestGraph:
     
     def test_add_multiple_edge_types(self):
         """Test aggiunta di archi con tipi diversi"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         
@@ -281,7 +281,7 @@ class TestGraph:
     
     def test_del_edge(self):
         """Test rimozione di un arco specifico"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         
@@ -293,7 +293,7 @@ class TestGraph:
     
     def test_del_edge_cleans_empty_structures(self):
         """Test che del_edge rimuove strutture vuote"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         
@@ -306,7 +306,7 @@ class TestGraph:
     
     def test_del_edge_nonexistent_safe(self):
         """Test che rimuovere un arco inesistente non causa errori"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         
@@ -316,7 +316,7 @@ class TestGraph:
     
     def test_has_edge(self):
         """Test verifica esistenza arco"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -330,7 +330,7 @@ class TestGraph:
     
     def test_get_neighbors(self):
         """Test ottenimento vicini (successori)"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -354,7 +354,7 @@ class TestGraph:
     
     def test_get_neighbors_empty(self):
         """Test get_neighbors per nodo senza vicini"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         
         neighbors = graph.get_neighbors(v1)
@@ -362,14 +362,14 @@ class TestGraph:
     
     def test_get_neighbors_nonexistent_raises_error(self):
         """Test che get_neighbors su nodo inesistente solleva errore"""
-        graph = Graph()
+        graph = BaseGraph()
         
         with pytest.raises(KeyError, match="does not exist"):
             graph.get_neighbors("nonexistent")
     
     def test_get_predecessors(self):
         """Test ottenimento predecessori"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -393,7 +393,7 @@ class TestGraph:
     
     def test_get_predecessors_empty(self):
         """Test get_predecessors per nodo senza predecessori"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         
         predecessors = graph.get_predecessors(v1)
@@ -401,14 +401,14 @@ class TestGraph:
     
     def test_get_predecessors_nonexistent_raises_error(self):
         """Test che get_predecessors su nodo inesistente solleva errore"""
-        graph = Graph()
+        graph = BaseGraph()
         
         with pytest.raises(KeyError, match="does not exist"):
             graph.get_predecessors("nonexistent")
     
     def test_neighbors_returns_copy(self):
         """Test che get_neighbors restituisce una copia (non modifica originale)"""
-        graph = Graph()
+        graph = BaseGraph()
         v1 = graph.add_node()
         v2 = graph.add_node()
         v3 = graph.add_node()
@@ -427,7 +427,7 @@ class TestGraphIntegration:
     
     def test_complex_graph_scenario(self):
         """Test scenario complesso con nodi e archi multipli"""
-        graph = Graph(name="", weight=0)
+        graph = BaseGraph(name="", weight=0)
         
         # Crea una rete di nodi
         a = graph.add_node(uid="A", name="Node A", weight=10)
@@ -449,7 +449,7 @@ class TestGraphIntegration:
     
     def test_graph_modification_workflow(self):
         """Test workflow completo: creazione, modifica, rimozione"""
-        graph = Graph(name="", status="", priority=0)
+        graph = BaseGraph(name="", status="", priority=0)
         
         # Crea nodi
         task1 = graph.add_node(name="Task 1", status="todo", priority=1)
@@ -475,7 +475,7 @@ class TestGraphIntegration:
     
     def test_circular_dependencies(self):
         """Test gestione dipendenze circolari"""
-        graph = Graph()
+        graph = BaseGraph()
         
         v1 = graph.add_node()
         v2 = graph.add_node()
@@ -493,7 +493,7 @@ class TestGraphIntegration:
     
     def test_multiple_edge_types_same_nodes(self):
         """Test nodi connessi con più tipi di archi"""
-        graph = Graph()
+        graph = BaseGraph()
         
         person1 = graph.add_node()
         person2 = graph.add_node()

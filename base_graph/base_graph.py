@@ -12,7 +12,7 @@ class BaseGraph:
         self.rev_edges = {}
 
     def add_property(self, key, value):
-        if key != "uid":
+        if key == "uid":
             raise KeyError(f"Cannot use key '{key}', reserved")
         if key in self.keys:
             raise KeyError(f"key '{key}' already present")
@@ -152,6 +152,234 @@ class BaseGraph:
         return (tipo in self.edges and 
                 v1 in self.edges[tipo] and 
                 v2 in self.edges[tipo][v1])
+    
+    def to_dict(self):
+        """Serializza il grafo in un dizionario"""
+        return {
+            'keys': self.keys,
+            'progress': self.progress,
+            'nodes': {uid: node.to_dict() for uid, node in self.nodes.items()},
+            'edges': {
+                tipo: {
+                    v1: list(v2_set) for v1, v2_set in edges_dict.items()
+                } for tipo, edges_dict in self.edges.items()
+            }
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        """Ricrea un grafo da un dizionario"""
+        graph = cls(**data['keys'])
+        graph.progress = data['progress']
+        
+        # Ricrea i nodi
+        for uid, node_data in data['nodes'].items():
+            node = Node(node_data['uid'], **node_data['attributes'])
+            graph.nodes[uid] = node
+        
+        # Ricrea gli archi
+        for tipo, edges_dict in data['edges'].items():
+            for v1, v2_list in edges_dict.items():
+                for v2 in v2_list:
+                    graph.add_edge(v1, v2, tipo)
+        
+        return graph
+    
+    def save_json(self, filepath):
+        """Salva il grafo in un file JSON"""
+        import json
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    @classmethod
+    def load_json(cls, filepath):
+        """Carica il grafo da un file JSON"""
+        import json
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+    
+    def export_graphml(self, filepath):
+        """Esporta il grafo in formato GraphML per visualizzazione"""
+        import xml.etree.ElementTree as ET
+        from xml.dom import minidom
+        
+        # Crea root element
+        graphml = ET.Element('graphml')
+        graphml.set('xmlns', 'http://graphml.graphdrawing.org/xmlns')
+        graphml.set('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+        graphml.set('xsi:schemaLocation', 
+                    'http://graphml.graphdrawing.org/xmlns '
+                    'http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd')
+        
+        # Definisci gli attributi dei nodi (keys)
+        key_id = 0
+        key_mapping = {}
+        for attr_name, attr_value in self.keys.items():
+            key_elem = ET.SubElement(graphml, 'key')
+            key_elem.set('id', f'k{key_id}')
+            key_elem.set('for', 'node')
+            key_elem.set('attr.name', attr_name)
+            
+            # Determina il tipo
+            if isinstance(attr_value, bool):
+                key_elem.set('attr.type', 'boolean')
+            elif isinstance(attr_value, int):
+                key_elem.set('attr.type', 'int')
+            elif isinstance(attr_value, float):
+                key_elem.set('attr.type', 'double')
+            else:
+                key_elem.set('attr.type', 'string')
+            
+            key_mapping[attr_name] = f'k{key_id}'
+            key_id += 1
+        
+        # Definisci l'attributo per il tipo di edge
+        edge_type_key = ET.SubElement(graphml, 'key')
+        edge_type_key.set('id', 'edge_type')
+        edge_type_key.set('for', 'edge')
+        edge_type_key.set('attr.name', 'type')
+        edge_type_key.set('attr.type', 'string')
+        
+        # Crea il grafo
+        graph_elem = ET.SubElement(graphml, 'graph')
+        graph_elem.set('id', 'G')
+        graph_elem.set('edgedefault', 'directed')
+        
+        # Aggiungi i nodi
+        for uid, node in self.nodes.items():
+            node_elem = ET.SubElement(graph_elem, 'node')
+            node_elem.set('id', uid)
+            
+            # Aggiungi gli attributi del nodo
+            for attr_name, key_id_str in key_mapping.items():
+                if hasattr(node, attr_name):
+                    data_elem = ET.SubElement(node_elem, 'data')
+                    data_elem.set('key', key_id_str)
+                    value = getattr(node, attr_name)
+                    data_elem.text = str(value).lower() if isinstance(value, bool) else str(value)
+        
+        # Aggiungi gli archi
+        edge_id = 0
+        for tipo, edges_dict in self.edges.items():
+            for v1, v2_set in edges_dict.items():
+                for v2 in v2_set:
+                    edge_elem = ET.SubElement(graph_elem, 'edge')
+                    edge_elem.set('id', f'e{edge_id}')
+                    edge_elem.set('source', v1)
+                    edge_elem.set('target', v2)
+                    
+                    # Aggiungi il tipo di edge come attributo
+                    data_elem = ET.SubElement(edge_elem, 'data')
+                    data_elem.set('key', 'edge_type')
+                    data_elem.text = tipo
+                    
+                    edge_id += 1
+        
+        # Formatta e salva con indentazione
+        xml_str = ET.tostring(graphml, encoding='unicode')
+        dom = minidom.parseString(xml_str)
+        pretty_xml = dom.toprettyxml(indent='  ')
+        
+        # Rimuovi linee vuote extra
+        lines = [line for line in pretty_xml.split('\n') if line.strip()]
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+    
+    @classmethod
+    def import_graphml(cls, filepath):
+        """Importa un grafo da formato GraphML"""
+        import xml.etree.ElementTree as ET
+        
+        tree = ET.parse(filepath)
+        root = tree.getroot()
+        
+        # Namespace GraphML
+        ns = {'g': 'http://graphml.graphdrawing.org/xmlns'}
+        
+        # Parse le definizioni delle chiavi
+        node_keys = {}
+        edge_type_key = None
+        
+        for key_elem in root.findall('g:key', ns):
+            key_id = key_elem.get('id')
+            key_for = key_elem.get('for')
+            attr_name = key_elem.get('attr.name')
+            attr_type = key_elem.get('attr.type')
+            
+            if key_for == 'node':
+                node_keys[key_id] = {
+                    'name': attr_name,
+                    'type': attr_type
+                }
+            elif key_for == 'edge' and attr_name == 'type':
+                edge_type_key = key_id
+        
+        # Determina i keys per il grafo basandosi sui tipi
+        graph_keys = {}
+        for key_info in node_keys.values():
+            attr_name = key_info['name']
+            attr_type = key_info['type']
+            
+            if attr_type == 'boolean':
+                graph_keys[attr_name] = True
+            elif attr_type == 'int':
+                graph_keys[attr_name] = 0
+            elif attr_type == 'double':
+                graph_keys[attr_name] = 0.0
+            else:
+                graph_keys[attr_name] = ""
+        
+        # Crea il grafo
+        graph = cls(**graph_keys)
+        
+        # Trova l'elemento graph
+        graph_elem = root.find('g:graph', ns)
+        
+        # Parse i nodi
+        for node_elem in graph_elem.findall('g:node', ns):
+            uid = node_elem.get('id')
+            node_attrs = {'uid': uid}
+            
+            for data_elem in node_elem.findall('g:data', ns):
+                key_id = data_elem.get('key')
+                if key_id in node_keys:
+                    key_info = node_keys[key_id]
+                    attr_name = key_info['name']
+                    attr_type = key_info['type']
+                    value_text = data_elem.text
+                    
+                    # Converti il valore al tipo appropriato
+                    if attr_type == 'boolean':
+                        value = value_text.lower() == 'true'
+                    elif attr_type == 'int':
+                        value = int(value_text)
+                    elif attr_type == 'double':
+                        value = float(value_text)
+                    else:
+                        value = value_text
+                    
+                    node_attrs[attr_name] = value
+            
+            graph.add_node(**node_attrs)
+        
+        # Parse gli archi
+        for edge_elem in graph_elem.findall('g:edge', ns):
+            source = edge_elem.get('source')
+            target = edge_elem.get('target')
+            edge_type = 'default'
+            
+            # Cerca il tipo di edge
+            if edge_type_key:
+                for data_elem in edge_elem.findall('g:data', ns):
+                    if data_elem.get('key') == edge_type_key:
+                        edge_type = data_elem.text
+                        break
+            
+            graph.add_edge(source, target, edge_type)
+        
+        return graph
 
 
 class Node:
@@ -180,3 +408,10 @@ class Node:
     def __hash__(self):
         """Hash basato su uid per permettere uso in set/dict"""
         return hash(self.uid)
+    
+    def to_dict(self):
+        """Serializza il nodo in un dizionario"""
+        return {
+            'uid': self.uid,
+            'attributes': {k: v for k, v in self.__dict__.items() if k != 'uid'}
+        }

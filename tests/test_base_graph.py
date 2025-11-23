@@ -1,4 +1,7 @@
 import pytest
+import json
+import os
+import tempfile
 from base_graph import BaseGraph, Node
 
 
@@ -514,3 +517,535 @@ class TestGraphIntegration:
         assert graph.has_edge(person1, person2, "friend")
         assert not graph.has_edge(person1, person2, "colleague")
         assert graph.has_edge(person1, person2, "neighbor")
+
+
+class TestNodeSerialization:
+    """Test per la serializzazione dei nodi"""
+    
+    def test_node_to_dict_basic(self):
+        """Test serializzazione nodo base"""
+        node = Node("test-1", name="Test", value=42)
+        node_dict = node.to_dict()
+        
+        assert node_dict['uid'] == "test-1"
+        assert node_dict['attributes'] == {'name': "Test", 'value': 42}
+    
+    def test_node_to_dict_no_attributes(self):
+        """Test serializzazione nodo senza attributi extra"""
+        node = Node("test-2")
+        node_dict = node.to_dict()
+        
+        assert node_dict['uid'] == "test-2"
+        assert node_dict['attributes'] == {}
+    
+    def test_node_to_dict_multiple_types(self):
+        """Test serializzazione con vari tipi di dati"""
+        node = Node("test-3", name="Node", count=10, active=True, score=98.5)
+        node_dict = node.to_dict()
+        
+        attrs = node_dict['attributes']
+        assert attrs['name'] == "Node"
+        assert attrs['count'] == 10
+        assert attrs['active'] is True
+        assert attrs['score'] == 98.5
+
+
+class TestGraphSerialization:
+    """Test per la serializzazione del grafo"""
+    
+    def test_graph_to_dict_empty(self):
+        """Test serializzazione grafo vuoto"""
+        graph = BaseGraph()
+        graph_dict = graph.to_dict()
+        
+        assert graph_dict['keys'] == {}
+        assert graph_dict['progress'] == 0
+        assert graph_dict['nodes'] == {}
+        assert graph_dict['edges'] == {}
+    
+    def test_graph_to_dict_with_keys(self):
+        """Test serializzazione con chiavi definite"""
+        graph = BaseGraph(name="", value=0, active=True)
+        graph_dict = graph.to_dict()
+        
+        assert graph_dict['keys'] == {'name': "", 'value': 0, 'active': True}
+    
+    def test_graph_to_dict_with_nodes(self):
+        """Test serializzazione con nodi"""
+        graph = BaseGraph(name="", priority=0)
+        uid1 = graph.add_node(name="Node1", priority=1)
+        uid2 = graph.add_node(name="Node2", priority=2)
+        
+        graph_dict = graph.to_dict()
+        
+        assert len(graph_dict['nodes']) == 2
+        assert uid1 in graph_dict['nodes']
+        assert uid2 in graph_dict['nodes']
+        assert graph_dict['nodes'][uid1]['attributes']['name'] == "Node1"
+        assert graph_dict['nodes'][uid2]['attributes']['priority'] == 2
+    
+    def test_graph_to_dict_with_edges(self):
+        """Test serializzazione con archi"""
+        graph = BaseGraph()
+        v1 = graph.add_node()
+        v2 = graph.add_node()
+        v3 = graph.add_node()
+        
+        graph.add_edge(v1, v2, "link")
+        graph.add_edge(v1, v3, "link")
+        graph.add_edge(v2, v3, "other")
+        
+        graph_dict = graph.to_dict()
+        
+        assert 'link' in graph_dict['edges']
+        assert 'other' in graph_dict['edges']
+        assert v2 in graph_dict['edges']['link'][v1]
+        assert v3 in graph_dict['edges']['link'][v1]
+        assert v3 in graph_dict['edges']['other'][v2]
+    
+    def test_graph_from_dict_empty(self):
+        """Test ricostruzione grafo vuoto"""
+        original = BaseGraph()
+        graph_dict = original.to_dict()
+        restored = BaseGraph.from_dict(graph_dict)
+        
+        assert len(restored.nodes) == 0
+        assert len(restored.edges) == 0
+        assert restored.keys == {}
+    
+    def test_graph_from_dict_with_keys(self):
+        """Test ricostruzione con chiavi"""
+        original = BaseGraph(name="", value=0, active=True)
+        graph_dict = original.to_dict()
+        restored = BaseGraph.from_dict(graph_dict)
+        
+        assert restored.keys == {'name': "", 'value': 0, 'active': True}
+    
+    def test_graph_from_dict_with_nodes(self):
+        """Test ricostruzione con nodi"""
+        original = BaseGraph(name="", priority=0)
+        uid1 = original.add_node(name="Task1", priority=1)
+        uid2 = original.add_node(name="Task2", priority=2)
+        
+        graph_dict = original.to_dict()
+        restored = BaseGraph.from_dict(graph_dict)
+        
+        assert len(restored.nodes) == 2
+        assert uid1 in restored.nodes
+        assert uid2 in restored.nodes
+        assert restored.nodes[uid1].name == "Task1"
+        assert restored.nodes[uid2].priority == 2
+    
+    def test_graph_from_dict_preserves_progress(self):
+        """Test che from_dict preserva il contatore progress"""
+        original = BaseGraph()
+        original.add_node()
+        original.add_node()
+        original.add_node()
+        
+        graph_dict = original.to_dict()
+        restored = BaseGraph.from_dict(graph_dict)
+        
+        assert restored.progress == original.progress
+        
+        # Il prossimo nodo aggiunto dovrebbe avere uid corretto
+        new_uid = restored.add_node()
+        assert new_uid == f"node-{original.progress}"
+    
+    def test_graph_from_dict_with_edges(self):
+        """Test ricostruzione con archi"""
+        original = BaseGraph()
+        v1 = original.add_node()
+        v2 = original.add_node()
+        v3 = original.add_node()
+        
+        original.add_edge(v1, v2, "depends")
+        original.add_edge(v2, v3, "depends")
+        original.add_edge(v1, v3, "skip")
+        
+        graph_dict = original.to_dict()
+        restored = BaseGraph.from_dict(graph_dict)
+        
+        assert restored.has_edge(v1, v2, "depends")
+        assert restored.has_edge(v2, v3, "depends")
+        assert restored.has_edge(v1, v3, "skip")
+        assert len(restored.get_neighbors(v1, "depends")) == 1
+        assert len(restored.get_neighbors(v1)) == 2
+
+
+class TestJSONSerialization:
+    """Test per salvataggio/caricamento JSON"""
+    
+    def test_save_json_creates_file(self):
+        """Test che save_json crea il file"""
+        graph = BaseGraph(name="")
+        graph.add_node(name="Test")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            graph.save_json(filepath)
+            assert os.path.exists(filepath)
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_save_load_json_roundtrip(self):
+        """Test ciclo completo salvataggio/caricamento JSON"""
+        original = BaseGraph(name="", priority=0, completed=False)
+        
+        # Crea struttura complessa
+        t1 = original.add_node(name="Task 1", priority=1, completed=False)
+        t2 = original.add_node(name="Task 2", priority=2, completed=True)
+        t3 = original.add_node(name="Task 3", priority=3, completed=False)
+        
+        original.add_edge(t1, t2, "depends_on")
+        original.add_edge(t2, t3, "depends_on")
+        original.add_edge(t1, t3, "blocks")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            # Salva e carica
+            original.save_json(filepath)
+            restored = BaseGraph.load_json(filepath)
+            
+            # Verifica struttura
+            assert len(restored.nodes) == 3
+            assert restored.keys == original.keys
+            assert restored.progress == original.progress
+            
+            # Verifica nodi
+            assert restored.nodes[t1].name == "Task 1"
+            assert restored.nodes[t2].completed is True
+            assert restored.nodes[t3].priority == 3
+            
+            # Verifica archi
+            assert restored.has_edge(t1, t2, "depends_on")
+            assert restored.has_edge(t2, t3, "depends_on")
+            assert restored.has_edge(t1, t3, "blocks")
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_json_format_is_valid(self):
+        """Test che il JSON prodotto è valido e leggibile"""
+        graph = BaseGraph(name="", value=0)
+        graph.add_node(name="Test", value=42)
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            graph.save_json(filepath)
+            
+            # Leggi e verifica che sia JSON valido
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            assert 'keys' in data
+            assert 'nodes' in data
+            assert 'edges' in data
+            assert 'progress' in data
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_json_with_unicode_characters(self):
+        """Test salvataggio con caratteri unicode"""
+        graph = BaseGraph(name="", description="")
+        graph.add_node(name="Nodo italiano", description="Descrizione con àccénti")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            graph.save_json(filepath)
+            restored = BaseGraph.load_json(filepath)
+            
+            node = list(restored.nodes.values())[0]
+            assert node.name == "Nodo italiano"
+            assert node.description == "Descrizione con àccénti"
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+
+class TestGraphMLSerialization:
+    """Test per export/import GraphML"""
+    
+    def test_export_graphml_creates_file(self):
+        """Test che export_graphml crea il file"""
+        graph = BaseGraph(name="")
+        graph.add_node(name="Test")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            graph.export_graphml(filepath)
+            assert os.path.exists(filepath)
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_export_graphml_is_valid_xml(self):
+        """Test che il GraphML prodotto è XML valido"""
+        import xml.etree.ElementTree as ET
+        
+        graph = BaseGraph(name="", value=0)
+        v1 = graph.add_node(name="Node1", value=10)
+        v2 = graph.add_node(name="Node2", value=20)
+        graph.add_edge(v1, v2, "link")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            graph.export_graphml(filepath)
+            
+            # Verifica che sia XML valido
+            tree = ET.parse(filepath)
+            root = tree.getroot()
+            
+            assert root.tag.endswith('graphml')
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_export_import_graphml_roundtrip(self):
+        """Test ciclo completo export/import GraphML"""
+        original = BaseGraph(name="", priority=0, active=True)
+        
+        # Crea struttura
+        n1 = original.add_node(name="Node 1", priority=1, active=True)
+        n2 = original.add_node(name="Node 2", priority=2, active=False)
+        n3 = original.add_node(name="Node 3", priority=3, active=True)
+        
+        original.add_edge(n1, n2, "connects")
+        original.add_edge(n2, n3, "connects")
+        original.add_edge(n1, n3, "shortcut")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            # Export e import
+            original.export_graphml(filepath)
+            restored = BaseGraph.import_graphml(filepath)
+            
+            # Verifica nodi
+            assert len(restored.nodes) == 3
+            assert n1 in restored.nodes
+            assert n2 in restored.nodes
+            assert n3 in restored.nodes
+            
+            # Verifica attributi nodi
+            assert restored.nodes[n1].name == "Node 1"
+            assert restored.nodes[n1].priority == 1
+            assert restored.nodes[n1].active is True
+            
+            assert restored.nodes[n2].name == "Node 2"
+            assert restored.nodes[n2].active is False
+            
+            # Verifica archi
+            assert restored.has_edge(n1, n2, "connects")
+            assert restored.has_edge(n2, n3, "connects")
+            assert restored.has_edge(n1, n3, "shortcut")
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_graphml_with_different_types(self):
+        """Test GraphML con diversi tipi di dati"""
+        original = BaseGraph(
+            text="",
+            count=0,
+            score=0.0,
+            enabled=True
+        )
+        
+        uid = original.add_node(
+            text="Sample",
+            count=42,
+            score=98.5,
+            enabled=False
+        )
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            original.export_graphml(filepath)
+            restored = BaseGraph.import_graphml(filepath)
+            
+            node = restored.nodes[uid]
+            assert node.text == "Sample"
+            assert node.count == 42
+            assert node.score == 98.5
+            assert node.enabled is False
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_graphml_with_multiple_edge_types(self):
+        """Test GraphML con più tipi di archi"""
+        graph = BaseGraph()
+        v1 = graph.add_node()
+        v2 = graph.add_node()
+        
+        graph.add_edge(v1, v2, "type_a")
+        graph.add_edge(v1, v2, "type_b")
+        graph.add_edge(v1, v2, "type_c")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            graph.export_graphml(filepath)
+            restored = BaseGraph.import_graphml(filepath)
+            
+            assert restored.has_edge(v1, v2, "type_a")
+            assert restored.has_edge(v1, v2, "type_b")
+            assert restored.has_edge(v1, v2, "type_c")
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_graphml_preserves_custom_uids(self):
+        """Test che GraphML preserva gli UID personalizzati"""
+        graph = BaseGraph(name="")
+        
+        graph.add_node(uid="custom-1", name="First")
+        graph.add_node(uid="custom-2", name="Second")
+        graph.add_node(uid="my-special-id", name="Third")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            graph.export_graphml(filepath)
+            restored = BaseGraph.import_graphml(filepath)
+            
+            assert "custom-1" in restored.nodes
+            assert "custom-2" in restored.nodes
+            assert "my-special-id" in restored.nodes
+            assert restored.nodes["custom-1"].name == "First"
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+
+class TestSerializationEdgeCases:
+    """Test casi limite nella serializzazione"""
+    
+    def test_empty_graph_json_roundtrip(self):
+        """Test grafo vuoto JSON"""
+        original = BaseGraph()
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            original.save_json(filepath)
+            restored = BaseGraph.load_json(filepath)
+            
+            assert len(restored.nodes) == 0
+            assert len(restored.edges) == 0
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_empty_graph_graphml_roundtrip(self):
+        """Test grafo vuoto GraphML"""
+        original = BaseGraph()
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.graphml') as f:
+            filepath = f.name
+        
+        try:
+            original.export_graphml(filepath)
+            restored = BaseGraph.import_graphml(filepath)
+            
+            assert len(restored.nodes) == 0
+            assert len(restored.edges) == 0
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_graph_with_isolated_nodes(self):
+        """Test grafo con nodi isolati (senza archi)"""
+        original = BaseGraph(name="")
+        original.add_node(name="Node 1")
+        original.add_node(name="Node 2")
+        original.add_node(name="Node 3")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            original.save_json(filepath)
+            restored = BaseGraph.load_json(filepath)
+            
+            assert len(restored.nodes) == 3
+            assert len(restored.edges) == 0
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+    
+    def test_large_graph_performance(self):
+        """Test prestazioni con grafo di dimensioni moderate"""
+        import time
+        
+        graph = BaseGraph(name="", value=0)
+        
+        # Crea 100 nodi
+        nodes = []
+        for i in range(100):
+            uid = graph.add_node(name=f"Node {i}", value=i)
+            nodes.append(uid)
+        
+        # Crea 200 archi
+        for i in range(200):
+            v1 = nodes[i % 100]
+            v2 = nodes[(i + 1) % 100]
+            graph.add_edge(v1, v2, "link")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+            filepath = f.name
+        
+        try:
+            # Misura tempo di salvataggio
+            start = time.time()
+            graph.save_json(filepath)
+            save_time = time.time() - start
+            
+            # Misura tempo di caricamento
+            start = time.time()
+            restored = BaseGraph.load_json(filepath)
+            load_time = time.time() - start
+            
+            # Verifica che sia ragionevolmente veloce (< 1 secondo ciascuno)
+            assert save_time < 1.0
+            assert load_time < 1.0
+            
+            # Verifica integrità
+            assert len(restored.nodes) == 100
+            assert len(restored.edges["link"]) > 0
+            
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)

@@ -677,7 +677,7 @@ class TestJSONSerialization:
     """Test per salvataggio/caricamento JSON"""
     
     def test_save_json_creates_file(self):
-        """Test che save_json crea il file"""
+        """Test che save_json crei il file"""
         graph = BaseGraph(name="")
         graph.add_node(name="Test")
         

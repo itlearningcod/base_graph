@@ -39,8 +39,8 @@ dev = [
 Repository = "https://github.com/itlearningcod/base_graph"
 Issues = "https://github.com/itlearningcod/base_graph/issues"
 
-[tool.setuptools.packages.find]
-where = ["base_graph"]
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -88,6 +88,55 @@ graph.register_ordering("date", "reverse_timeline", reverse=True)
 # Chain: b → a → e → d  (descending; undated still at tail)
 ```
 
+### Property delegation
+
+Nodes can transparently inherit properties from another node without physically copying them. When an attribute is not set on the delegating node, access falls back to the source node. Local values always win over delegated ones.
+
+```python
+graph = BaseGraph(name="", age=0, role="")
+
+base = graph.add_node(uid="base", name="Base", age=30, role="admin")
+child = graph.add_node(uid="child", name="Child")  # only has 'name'
+
+graph.delegate_to("child", "base")
+
+node = graph.nodes["child"]
+node.name   # "Child"  — local value, not inherited
+node.age    # 30       — inherited from base
+node.role   # "admin"  — inherited from base
+```
+
+**Delegation chains** are supported. If `base` also delegates to another node, the lookup continues along the chain.
+
+**Querying and removing delegation:**
+
+```python
+graph.get_delegate("child")   # "base"
+graph.undelegate("child")
+graph.get_delegate("child")   # None
+```
+
+**Ordering constraint (cycle prevention)**
+
+You can designate a schema attribute as the delegation ordering key. When set, `delegate_to` only accepts links that go strictly forward in the ordering direction, which prevents cycles.
+
+```python
+graph = BaseGraph(name="", priority=0)
+graph.register_delegation_ordering("priority")  # delegation must go low → high
+
+low  = graph.add_node(uid="low",  priority=1, name="Low")
+high = graph.add_node(uid="high", priority=5, name="High", role="admin")
+
+graph.delegate_to("low", "high")   # valid: high.priority > low.priority
+graph.delegate_to("high", "low")   # raises ValueError — wrong direction
+```
+
+Use `reverse=True` for descending ordering (delegation must go high → low).
+
+Nodes that lack the ordering key are exempt from the check and can delegate freely.
+
+**Delegation is persisted** in `save_json`/`load_json` and `to_dict`/`from_dict`, including the ordering config. Deleting a source node automatically clears the delegation on any node that pointed to it.
+
 ### Serialization
 
 ```python

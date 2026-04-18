@@ -1231,3 +1231,232 @@ class TestDynamicOrdering:
         # Manual edge should be gone; correct chain in place
         assert graph.has_edge(a, b, "seq")
         assert not graph.has_edge(b, a, "seq")
+
+
+class TestDelegation:
+    """Tests for node property delegation."""
+
+    def _graph(self):
+        return BaseGraph(name="", age=0, active=False, priority=0)
+
+    def test_basic_delegation_missing_property_from_source(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", name="Bob", age=30)
+        g.delegate_to(a, b)
+        assert g.nodes[a].age == 30
+
+    def test_local_value_wins_over_delegate(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice", age=10)
+        b = g.add_node(uid="b", name="Bob", age=30)
+        g.delegate_to(a, b)
+        assert g.nodes[a].name == "Alice"
+        assert g.nodes[a].age == 10
+
+    def test_missing_attribute_raises_when_no_delegate(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        with pytest.raises(AttributeError):
+            _ = g.nodes[a].age
+
+    def test_chain_delegation_two_hops(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", name="Bob", age=30)
+        c = g.add_node(uid="c", name="Charlie", age=25, active=True)
+        g.delegate_to(a, b)
+        g.delegate_to(b, c)
+        # a → b → c: age comes from b (30), active from c
+        assert g.nodes[a].age == 30
+        assert g.nodes[a].active is True
+        # b resolves active directly from c
+        assert g.nodes[b].active is True
+
+    def test_chain_local_wins_at_each_hop(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", name="Bob", age=30)
+        c = g.add_node(uid="c", name="Charlie", age=99)
+        g.delegate_to(a, b)
+        g.delegate_to(b, c)
+        # b has age=30 locally, so a sees 30 (not 99 from c)
+        assert g.nodes[a].age == 30
+
+    def test_get_delegate_returns_source_uid(self):
+        g = self._graph()
+        a = g.add_node(uid="a")
+        b = g.add_node(uid="b")
+        g.delegate_to(a, b)
+        assert g.get_delegate(a) == b
+
+    def test_get_delegate_returns_none_when_no_delegation(self):
+        g = self._graph()
+        a = g.add_node(uid="a")
+        assert g.get_delegate(a) is None
+
+    def test_undelegate_removes_fallback(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", name="Bob", age=30)
+        g.delegate_to(a, b)
+        assert g.nodes[a].age == 30
+        g.undelegate(a)
+        with pytest.raises(AttributeError):
+            _ = g.nodes[a].age
+        assert g.get_delegate(a) is None
+
+    def test_undelegate_removes_edge(self):
+        g = self._graph()
+        a = g.add_node(uid="a")
+        b = g.add_node(uid="b")
+        g.delegate_to(a, b)
+        g.undelegate(a)
+        assert not g.has_edge(a, b, "_delegates")
+
+    def test_delegate_replaces_existing_delegation(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", age=30)
+        c = g.add_node(uid="c", age=99)
+        g.delegate_to(a, b)
+        assert g.nodes[a].age == 30
+        g.delegate_to(a, c)
+        assert g.nodes[a].age == 99
+        assert not g.has_edge(a, b, "_delegates")
+
+    def test_del_node_clears_delegate_reference(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", age=30)
+        g.delegate_to(a, b)
+        assert g.nodes[a].age == 30
+        g.del_node(b)
+        with pytest.raises(AttributeError):
+            _ = g.nodes[a].age
+
+    def test_cannot_delegate_to_self(self):
+        g = self._graph()
+        a = g.add_node(uid="a")
+        with pytest.raises(ValueError):
+            g.delegate_to(a, a)
+
+    def test_delegate_to_unknown_node_raises(self):
+        g = self._graph()
+        a = g.add_node(uid="a")
+        with pytest.raises(KeyError):
+            g.delegate_to(a, "nonexistent")
+
+    def test_delegate_from_unknown_node_raises(self):
+        g = self._graph()
+        b = g.add_node(uid="b")
+        with pytest.raises(KeyError):
+            g.delegate_to("nonexistent", b)
+
+    # --- Ordering constraint ---
+
+    def test_ordering_constraint_ascending_valid(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        a = g.add_node(uid="a", priority=1)
+        b = g.add_node(uid="b", priority=2)
+        g.delegate_to(a, b)  # valid: b.priority > a.priority
+        assert g.get_delegate(a) == b
+
+    def test_ordering_constraint_ascending_invalid_raises(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        a = g.add_node(uid="a", priority=2)
+        b = g.add_node(uid="b", priority=1)
+        with pytest.raises(ValueError):
+            g.delegate_to(a, b)  # invalid: b.priority < a.priority
+
+    def test_ordering_constraint_equal_raises(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        a = g.add_node(uid="a", priority=2)
+        b = g.add_node(uid="b", priority=2)
+        with pytest.raises(ValueError):
+            g.delegate_to(a, b)  # equal values violate strict ordering
+
+    def test_ordering_constraint_descending_valid(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority", reverse=True)
+        a = g.add_node(uid="a", priority=5)
+        b = g.add_node(uid="b", priority=2)
+        g.delegate_to(a, b)  # valid: b.priority < a.priority (descending)
+        assert g.get_delegate(a) == b
+
+    def test_ordering_constraint_descending_invalid_raises(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority", reverse=True)
+        a = g.add_node(uid="a", priority=2)
+        b = g.add_node(uid="b", priority=5)
+        with pytest.raises(ValueError):
+            g.delegate_to(a, b)
+
+    def test_ordering_constraint_exempt_when_key_missing(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        # Neither node has 'priority' set → exempt from ordering check
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", name="Bob")
+        g.delegate_to(a, b)  # should not raise
+        assert g.get_delegate(a) == b
+
+    def test_register_delegation_ordering_unknown_key_raises(self):
+        g = self._graph()
+        with pytest.raises(KeyError):
+            g.register_delegation_ordering("nonexistent_key")
+
+    # --- Serialization ---
+
+    def test_to_dict_excludes_delegate_from_node_attributes(self):
+        g = self._graph()
+        a = g.add_node(uid="a", name="Alice")
+        b = g.add_node(uid="b", age=30)
+        g.delegate_to(a, b)
+        node_attrs = g.to_dict()["nodes"][a]["attributes"]
+        assert "_delegate" not in node_attrs
+
+    def test_to_dict_includes_delegation_config(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority", reverse=True)
+        d = g.to_dict()
+        assert d["delegation_key"] == "priority"
+        assert d["delegation_reverse"] is True
+
+    def test_roundtrip_dict_preserves_delegation(self):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        a = g.add_node(uid="a", name="Alice", priority=1)
+        b = g.add_node(uid="b", name="Bob", age=30, priority=2)
+        g.delegate_to(a, b)
+
+        g2 = BaseGraph.from_dict(g.to_dict())
+        assert g2._delegation_key == "priority"
+        assert g2._delegation_reverse is False
+        assert g2.get_delegate(a) == b
+        assert g2.nodes[a].age == 30
+        assert g2.nodes[a].name == "Alice"
+
+    def test_roundtrip_json_preserves_delegation(self, tmp_path):
+        g = self._graph()
+        g.register_delegation_ordering("priority")
+        a = g.add_node(uid="a", name="Alice", priority=1)
+        b = g.add_node(uid="b", name="Bob", age=30, priority=2)
+        g.delegate_to(a, b)
+
+        path = str(tmp_path / "graph.json")
+        g.save_json(path)
+        g2 = BaseGraph.load_json(path)
+
+        assert g2._delegation_key == "priority"
+        assert g2.get_delegate(a) == b
+        assert g2.nodes[a].age == 30
+
+    def test_roundtrip_no_delegation_config_defaults(self):
+        g = self._graph()
+        g2 = BaseGraph.from_dict(g.to_dict())
+        assert g2._delegation_key is None
+        assert g2._delegation_reverse is False

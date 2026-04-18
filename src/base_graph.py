@@ -12,6 +12,9 @@ class BaseGraph:
         self.rev_edges = {}
         # dynamic orderings: {tipo: {"key": str, "reverse": bool}}
         self._orderings = {}
+        # delegation ordering constraint
+        self._delegation_key = None
+        self._delegation_reverse = False
 
     def add_property(self, key, value):
         if key == "uid":
@@ -78,6 +81,13 @@ class BaseGraph:
         if uid not in self.nodes:
             raise KeyError(f"Node with uid '{uid}' does not exist")
 
+        # Clear _delegate on nodes that were delegating to this uid
+        for delegating_uid in list(self.rev_edges.get("_delegates", {}).get(uid, set())):
+            try:
+                object.__delattr__(self.nodes[delegating_uid], "_delegate")
+            except AttributeError:
+                pass
+
         # Rimuovi tutti gli archi in uscita
         for tipo in list(self.edges.keys()):
             if uid in self.edges[tipo]:
@@ -117,6 +127,99 @@ class BaseGraph:
             raise KeyError(f"Key '{key}' is not in graph schema")
         self._orderings[tipo] = {"key": key, "reverse": reverse}
         self._rebuild_ordering(tipo)
+
+    def register_delegation_ordering(self, key: str, reverse: bool = False) -> None:
+        """Set which schema attribute governs delegation direction (prevents cycles).
+
+        When set, delegate_to() requires the source node's key value to be
+        strictly ahead of the delegating node's key value in the ordering direction.
+        Nodes that lack the key attribute are exempt from this check.
+
+        Args:
+            key: Schema attribute name to use as the ordering key.
+            reverse: If True, delegation must go in descending order of key values.
+
+        Raises:
+            KeyError: If key is not in the graph schema.
+        """
+        if key not in self.keys:
+            raise KeyError(f"Key '{key}' is not in graph schema")
+        self._delegation_key = key
+        self._delegation_reverse = reverse
+
+    def delegate_to(self, uid: str, source_uid: str) -> None:
+        """Make node uid inherit missing properties from source_uid.
+
+        Local attributes always take priority over delegated ones.
+        Chains are supported: if source_uid also delegates, the lookup
+        continues along the chain.
+
+        Args:
+            uid: The delegating node.
+            source_uid: The node to delegate to.
+
+        Raises:
+            KeyError: If either node does not exist.
+            ValueError: If uid == source_uid, or if the delegation violates
+                        the registered delegation ordering constraint.
+        """
+        if uid not in self.nodes:
+            raise KeyError(f"Node '{uid}' not found")
+        if source_uid not in self.nodes:
+            raise KeyError(f"Node '{source_uid}' not found")
+        if uid == source_uid:
+            raise ValueError("A node cannot delegate to itself")
+
+        # Ordering direction constraint
+        if self._delegation_key is not None:
+            key = self._delegation_key
+            uid_val = getattr(self.nodes[uid], key, None)
+            src_val = getattr(self.nodes[source_uid], key, None)
+            if uid_val is not None and src_val is not None:
+                if not self._delegation_reverse and src_val <= uid_val:
+                    raise ValueError(
+                        f"Delegation from '{uid}' ({key}={uid_val}) to '{source_uid}' "
+                        f"({key}={src_val}) violates ascending ordering constraint"
+                    )
+                if self._delegation_reverse and src_val >= uid_val:
+                    raise ValueError(
+                        f"Delegation from '{uid}' ({key}={uid_val}) to '{source_uid}' "
+                        f"({key}={src_val}) violates descending ordering constraint"
+                    )
+
+        # Remove existing delegation if any
+        self.undelegate(uid)
+
+        # Add edge for persistence + wire the reference
+        self.add_edge(uid, source_uid, "_delegates")
+        self.nodes[uid]._delegate = self.nodes[source_uid]
+
+    def undelegate(self, uid: str) -> None:
+        """Remove any delegation from node uid.
+
+        Raises:
+            KeyError: If the node does not exist.
+        """
+        if uid not in self.nodes:
+            raise KeyError(f"Node '{uid}' not found")
+        if "_delegates" in self.edges and uid in self.edges["_delegates"]:
+            for source_uid in list(self.edges["_delegates"][uid]):
+                self.del_edge(uid, source_uid, "_delegates")
+        try:
+            object.__delattr__(self.nodes[uid], "_delegate")
+        except AttributeError:
+            pass
+
+    def get_delegate(self, uid: str) -> "str | None":
+        """Return the uid of the node that uid delegates to, or None.
+
+        Raises:
+            KeyError: If the node does not exist.
+        """
+        if uid not in self.nodes:
+            raise KeyError(f"Node '{uid}' not found")
+        targets = self.edges.get("_delegates", {}).get(uid, set())
+        return next(iter(targets)) if targets else None
 
     def _rebuild_ordering(self, tipo: str) -> None:
         """Wipe and rebuild the chain edges for a registered ordering."""
@@ -236,6 +339,8 @@ class BaseGraph:
                 for tipo, edges_dict in self.edges.items()
             },
             "orderings": self._orderings,
+            "delegation_key": self._delegation_key,
+            "delegation_reverse": self._delegation_reverse,
         }
 
     @classmethod
@@ -260,6 +365,16 @@ class BaseGraph:
         for tipo, config in data.get("orderings", {}).items():
             graph._orderings[tipo] = config
             graph._rebuild_ordering(tipo)
+
+        # Restore delegation ordering config
+        graph._delegation_key = data.get("delegation_key")
+        graph._delegation_reverse = data.get("delegation_reverse", False)
+
+        # Rewire _delegate references from persisted edges
+        for delegating_uid, source_list in data.get("edges", {}).get("_delegates", {}).items():
+            for source_uid in source_list:
+                if delegating_uid in graph.nodes and source_uid in graph.nodes:
+                    graph.nodes[delegating_uid]._delegate = graph.nodes[source_uid]
 
         return graph
 
@@ -469,6 +584,15 @@ class Node:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def __getattr__(self, name: str):
+        # Only called when normal attribute lookup fails.
+        # Follow the delegation chain if a delegate is set.
+        try:
+            delegate = object.__getattribute__(self, "_delegate")
+        except AttributeError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        return getattr(delegate, name)
+
     def update(self, **kwargs):
         """Aggiorna attributi del nodo"""
         for key, value in kwargs.items():
@@ -494,5 +618,8 @@ class Node:
         """Serializza il nodo in un dizionario"""
         return {
             "uid": self.uid,
-            "attributes": {k: v for k, v in self.__dict__.items() if k != "uid"},
+            "attributes": {
+                k: v for k, v in self.__dict__.items()
+                if k != "uid" and not k.startswith("_")
+            },
         }
